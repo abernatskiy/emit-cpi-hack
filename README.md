@@ -1,70 +1,140 @@
-# solana-example
+# emit_cpi!() event decoding
 
-This project shows how one can index Orca Exchange USDC-SOL swaps using Subsquid SDK.
+## Context
 
-## About SDK
+There are two sorts of event logs in Solana:
 
-Subsquid SDK is a TypeScript ETL toolkit for blockchain data, that currently supports
+1. Regular execution logs: these are just plain text strings with some conventions. They can get truncated, so in most cases they can't be relied upon.
+2. [emit_cpi!()](https://www.anchor-lang.com/docs/features/events#emit_cpi) logs that are no-op instructions that contain event data as arguments. These are reliable and suitable for use in ways mirroring EVM event logs.
 
-* Ethereum and everything Ethereum-like
-* [Substrate](https://substrate.io)-based chains
-* Solana.
+Here I describe a simple hack that I used to decode the `emit_cpi()` event shown as inner instruction #3.4 of [this transaction](https://solscan.io/tx/3NuGn5afo64xwc6s86LwzoKNLEmpoZNZPvuvt4MGMNvFmEsb83h9gAryx62ZbZ4GjxKtUwuKsWiiZ6ZytnULebtR).
 
-Subsquid SDK stands apart from the competition by
-
-* Being a toolkit (rather than an indexing app like TheGraph or Ponder)
-* Fast binary data codecs and type-safe access to decoded data  
-* Native support for sourcing the data from Subsquid Network.
-
-The latter is a key point, as Subsquid Network is a decentralized data lake and query engine, 
-that allows to granularly select and stream subset of block data to lightweight clients 
-while providing game changing performance over traditional RPC API.
-
-## Getting started
-
-### Prerequisites
-
-* Node.js (version 20.x and above)
-* Docker
-
-### Run indexer
+## To run
 
 ```bash
-# Install dependencies
-npm i
-
-# Compile the project
-npx tsc
-
-# Launch Postgres database to store the data
+git clone https://github.com/abernatskiy/emit-cpi-hack
+cd emit-cpi-hack
+npm ci
 docker compose up -d
-
-# Apply database migrations to create the target schema
 npx squid-typeorm-migration apply
-
-# Run indexer
+npm run build
 node -r dotenv/config lib/main.js
-
-# Checkout indexed swaps
-docker exec "$(basename "$(pwd)")-db-1" psql -U postgres \
-  -c "SELECT slot, from_token, to_token, from_amount, to_amount FROM exchange ORDER BY id LIMIT 10"
+```
+The output should contain the decoded and raw versions of the event near the bottom:
+```
+...
+{
+  accounts: {
+    whoKnowsWhatThisAccountIsButItsInTheExplorerSoGuessIllAddIt: 'Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1'
+  },
+  data: {
+    padding0: 17177263679997991869n,
+    padding1: 9951897102117436775n,
+    mint: 'FbxEm1WcM5sD2DEwdC3EDsVxfytZFGDGQhn9ybEMQLuM',
+    solAmount: 68047337278n,
+    tokenAmount: 4177289391945262081n,
+    isBuy: true,
+    user: 'DgN5v9i1SPiQabHereYvxcThNqjuQfkVYYCJ1AZCvVXD',
+    timestamp: 74018166880n,
+    virtualSolReserves: 434893235035100n,
+    virtualTokenReserves: 44018166880n
+  }
+}
+Instruction {
+  id: '000293112444-6uVYq-002078-000002-000003',
+  transactionIndex: 2078,
+  instructionAddress: [ 2, 3 ],
+  programId: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
+  accounts: [ 'Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1' ],
+  data: '2K7nL28PxCW8ejnyCeuMpbWfkY9zzQzZfg1cN5FgJmeAiGaSsXdEbhbKNs5fwho67ebDSGPf5Pf96LoYqKXnHun5qorNeBeu74AMeK6Q6PLPBAzNWSwq5nJhzRdDAAC2DemxkPXoz78hb6TpxPEmjX3oAWGXAawmwSQTkuSm5JX7U5q5cGSfJwmqtVaX',
+...
 ```
 
-For further details, please consult heavily commented [main.ts](./src/main.ts). 
+## How it came to be
 
-For even more details, see [Solana Indexing Docs](https://docs.subsquid.io/solana-indexing/)
+The `emit_cpi()` event is an instruction, so I expected it to be listed in the IDL under `.instructions`. Unfortunately I wasn't able to find an IDL listing it.
 
-## Decoding binary data
-
-`@subsquid/borsh` package allows to easily define fast and type-safe codec for any Solana data structure.
-
-In the future we plan to develop robust code generation tools, 
-that would allow to create all relevant definitions from IDL files automatically.
-
-Meanwhile, [abi](./src/abi) module gives an example of how that might look like.
-
-## Disclaimer
-
-Solana support is in beta. 
-
-In particular, we expect to make Subsquid Network data ingestion at least 50 times faster.
+However, there was an [IDL](https://github.com/mo4islona/jellyfishes/blob/main/streams/solana_pumpfun_tokens/pumpfun.idl.json) that listed an event with a signature identical to what I was seeing in the explorer. I used its fields list to put together a following instruction entry for the IDL:
+```json
+    {
+      "name": "tradeEventInstruction",
+      "docs": [
+        "Placeholder docs."
+      ],
+      "accounts": [],
+      "args": [
+        {
+          "name": "mint",
+          "type": "publicKey"
+        },
+        {
+          "name": "solAmount",
+          "type": "u64"
+        },
+        {
+          "name": "tokenAmount",
+          "type": "u64"
+        },
+        {
+          "name": "isBuy",
+          "type": "bool"
+        },
+        {
+          "name": "user",
+          "type": "publicKey"
+        },
+        {
+          "name": "timestamp",
+          "type": "i64"
+        },
+        {
+          "name": "virtualSolReserves",
+          "type": "u64"
+        },
+        {
+          "name": "virtualTokenReserves",
+          "type": "u64"
+        }
+      ]
+    },
+```
+This generated a wrong d8 descriminator so I had to comment out the discriminator-checking call in the decoder JS function. The values came out to be wrong, but I noticed that the `virtualTokenReserves` field has the correct value of `timestamp`. So I padded the argument list. I also added an account because the explorer listed one.
+```json
+    {
+      "name": "tradeEventInstruction",
+      "docs": [
+        "Placeholder docs."
+      ],
+      "accounts": [
+        {
+          "name": "whoKnowsWhatThisAccountIsButItsInTheExplorerSoGuessIllAddIt",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "padding0",
+          "type": "u64"
+        },
+        {
+          "name": "padding1",
+          "type": "u64"
+        },
+        {
+          "name": "mint",
+          "type": "publicKey"
+        },
+```
+This decoded the values correctly, but still generated the wrong d8. Adding a discriminator manually had no effect. Knowing that d8 is a signature hash of some kind I tried looking at the [emit_cpi!() source code](https://github.com/solana-foundation/anchor/blob/0e5285aecdf410fa0779b7cd09a47f235882c156/lang/attribute/event/src/lib.rs#L157C1-L195C2) to figure out what actual type(s) the first argument(s) have, but to no avail. I ended up just recommending the user to replace the d8 value with `0xe445a52e51cb9a1d` in the generated TS code:
+```ts
+...
+/**
+ * Placeholder docs.
+ */
+export const tradeEventInstruction = instruction(
+    {
+        d8: '0xe445a52e51cb9a1d',
+    },
+...
+```
