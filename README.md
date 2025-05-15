@@ -138,3 +138,7 @@ export const tradeEventInstruction = instruction(
     },
 ...
 ```
+
+## Suggestion
+
+It's easy enough to just add decoding of emit_cpi() events to the typegen, but the user-friendly approach should perhaps go further and make such events first class citizens in the API. This can be done without changing the dataset, just by adding the `"events"` data request, with retrieval of parent instructions, transactions etc.
